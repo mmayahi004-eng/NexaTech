@@ -1,0 +1,1771 @@
+# NexaTech — Build the NexaConnect Universal Connector Platform
+
+I am building **NexaTech**, an AI-powered business operating layer that connects to the software businesses already use.
+
+I need you to build the **NexaConnect connector architecture**.
+
+The goal is NOT to hard-code every integration independently.
+
+The goal is to create a scalable connector framework where Microsoft 365, Google Workspace, QuickBooks, Zoho, Square, Shopify, payroll systems, ERP systems, SQL databases, files, and future software can all connect to NexaTech through a standardized interface.
+
+---
+
+# 1. CORE PRINCIPLE
+
+External systems must NEVER be referenced directly throughout the NexaTech application.
+
+Use this architecture:
+
+```text
+External Business Systems
+        ↓
+     NexaConnect
+        ↓
+Connector Adapters
+        ↓
+Mapping / Normalization
+        ↓
+Universal NexaTech Objects
+        ↓
+NexaTech Core
+        ↓
+AI / Analytics / Workflows
+        ↓
+Permission + Action Layer
+        ↓
+External Systems
+```
+
+Every external platform must implement the same standardized connector interface.
+
+---
+
+# 2. BUILD A NEXACONNECT SDK
+
+Create a reusable connector interface similar to:
+
+```typescript
+interface NexaConnector {
+    id: string;
+    provider: string;
+    version: string;
+
+    authenticate(): Promise<AuthResult>;
+
+    disconnect(): Promise<void>;
+
+    testConnection(): Promise<ConnectionStatus>;
+
+    getCapabilities(): Promise<CapabilityManifest>;
+
+    fetchRecords(
+        objectType: string,
+        options?: FetchOptions
+    ): Promise<RecordBatch>;
+
+    getRecord?(
+        objectType: string,
+        externalId: string
+    ): Promise<ExternalRecord>;
+
+    createRecord?(
+        objectType: string,
+        data: unknown
+    ): Promise<ExternalRecord>;
+
+    updateRecord?(
+        objectType: string,
+        externalId: string,
+        data: unknown
+    ): Promise<ExternalRecord>;
+
+    subscribeEvents?(): Promise<WebhookSubscription>;
+
+    healthCheck(): Promise<ConnectorHealth>;
+}
+```
+
+Individual providers should extend/implement this interface.
+
+Do NOT allow provider-specific code to leak into NexaTech Core.
+
+---
+
+# 3. UNIVERSAL CAPABILITY SYSTEM
+
+Create a capability registry.
+
+The initial capabilities are:
+
+## Communication
+
+```text
+email.read
+email.send
+messages.read
+messages.send
+```
+
+## Calendar
+
+```text
+calendar.read
+calendar.write
+```
+
+## CRM
+
+```text
+customers.read
+customers.write
+
+contacts.read
+contacts.write
+
+leads.read
+leads.write
+
+deals.read
+deals.write
+```
+
+## Finance
+
+```text
+invoices.read
+invoices.write
+
+expenses.read
+expenses.write
+
+payments.read
+payments.write
+
+vendors.read
+vendors.write
+```
+
+## Commerce
+
+```text
+orders.read
+orders.write
+
+products.read
+products.write
+
+inventory.read
+inventory.write
+```
+
+## Workforce
+
+```text
+employees.read
+employees.write
+
+time.read
+time.write
+
+payroll.read
+```
+
+Payroll WRITE actions should NOT be enabled by default.
+
+## Operations
+
+```text
+workorders.read
+workorders.write
+
+assets.read
+assets.write
+
+maintenance.read
+maintenance.write
+```
+
+## Documents
+
+```text
+files.read
+files.write
+
+documents.read
+documents.search
+```
+
+A connector must explicitly declare which capabilities it supports.
+
+Never assume every connector supports every capability.
+
+---
+
+# 4. CONNECTOR MANIFEST
+
+Every connector should have metadata similar to:
+
+```json
+{
+    "id": "microsoft365",
+    "name": "Microsoft 365",
+    "category": [
+        "communication",
+        "calendar",
+        "documents"
+    ],
+    "authType": "oauth2",
+    "status": "available",
+    "capabilities": [
+        "email.read",
+        "email.send",
+        "calendar.read",
+        "calendar.write",
+        "contacts.read",
+        "files.read",
+        "files.write",
+        "documents.search"
+    ]
+}
+```
+
+Support these connector statuses:
+
+```text
+available
+beta
+development
+planned
+requires_partner_access
+unsupported
+```
+
+DO NOT claim an integration works unless it has actually been implemented and tested.
+
+---
+
+# 5. CONNECTOR REGISTRY
+
+Build a centralized Connector Registry.
+
+Example database structure:
+
+```text
+connectors
+
+id
+provider
+display_name
+category
+tier
+status
+
+auth_type
+transport_type
+
+api_version
+api_base_url
+
+supports_webhooks
+supports_incremental_sync
+
+capabilities
+
+documentation_url
+
+connector_version
+
+created_at
+updated_at
+last_verified_at
+```
+
+Create another table:
+
+```text
+organization_connections
+
+id
+
+organization_id
+connector_id
+
+status
+
+external_organization_id
+
+credential_reference
+
+permissions
+
+configuration
+
+last_sync_at
+last_success_at
+last_error
+
+created_at
+updated_at
+```
+
+Never store passwords or OAuth tokens directly in plaintext database columns.
+
+Create a secure secrets abstraction.
+
+---
+
+# 6. AUTHENTICATION FRAMEWORK
+
+Build reusable support for:
+
+```text
+OAuth 2.0 Authorization Code
+OAuth refresh tokens
+API keys
+Bearer tokens
+Basic authentication where unavoidable
+Database credentials
+Service accounts
+```
+
+OAuth should support:
+
+```text
+Connect
+↓
+Redirect to provider
+↓
+User authorizes
+↓
+Callback
+↓
+Exchange authorization code
+↓
+Securely store token reference
+↓
+Refresh automatically
+↓
+Connection becomes active
+```
+
+Support CSRF/state validation.
+
+Use PKCE where appropriate.
+
+Support revoking/disconnecting integrations.
+
+---
+
+# 7. UNIVERSAL DATA MODEL
+
+Build normalized NexaTech objects.
+
+Start with:
+
+```text
+Organization
+
+Customer
+Contact
+Lead
+Opportunity
+
+Employee
+Vendor
+
+Product
+Service
+InventoryItem
+
+Order
+Invoice
+Payment
+Expense
+
+WorkItem
+WorkOrder
+Task
+Appointment
+Event
+
+Asset
+Location
+
+Document
+File
+Message
+```
+
+Every normalized record must maintain source information:
+
+```json
+{
+    "source": {
+        "connectorId": "zoho-crm",
+        "connectionId": "...",
+        "externalId": "...",
+        "externalObjectType": "Contact",
+        "lastSyncedAt": "..."
+    }
+}
+```
+
+Never lose the original external ID.
+
+---
+
+# 8. IDENTITY RESOLUTION
+
+Create an identity resolution layer.
+
+Example:
+
+```text
+Outlook
+Mary Smith
+mary@example.com
+       ↓
+
+Zoho
+Mary Smith
+mary@example.com
+       ↓
+
+QuickBooks
+Mary Smith
+mary@example.com
+       ↓
+
+NexaTech
+Customer: Mary Smith
+```
+
+Use deterministic identifiers first:
+
+```text
+email
+phone
+external IDs
+organization
+tax/business identifiers where appropriate
+```
+
+Do NOT let an LLM automatically merge uncertain customer identities.
+
+If confidence is insufficient, flag:
+
+```text
+possible_match
+```
+
+and request human confirmation.
+
+---
+
+# 9. SYNC ENGINE
+
+Build a provider-independent synchronization engine.
+
+Architecture:
+
+```text
+Connector
+   ↓
+Raw ingestion
+   ↓
+Validation
+   ↓
+Mapping
+   ↓
+Normalization
+   ↓
+Identity resolution
+   ↓
+NexaTech database
+```
+
+Support:
+
+### Initial Sync
+
+Historical import when a connector is first installed.
+
+### Incremental Sync
+
+Prefer:
+
+```text
+Webhooks
+Delta/change APIs
+Sync cursors
+```
+
+Fallback:
+
+```text
+Scheduled polling
+```
+
+Implement:
+
+```text
+pagination
+rate-limit handling
+retry logic
+exponential backoff
+idempotency
+sync cursors
+dead-letter handling
+structured logging
+```
+
+---
+
+# 10. WEBHOOK ENGINE
+
+Create one standardized webhook system.
+
+Example:
+
+```text
+POST /webhooks/:provider
+```
+
+Verify provider signatures where supported.
+
+Convert external webhook events into internal NexaTech events:
+
+```text
+customer.created
+customer.updated
+
+invoice.created
+invoice.overdue
+
+email.received
+
+calendar.event.created
+
+order.created
+
+inventory.changed
+
+employee.updated
+
+workorder.created
+```
+
+---
+
+# 11. GENERIC CONNECTORS FIRST
+
+Before building dozens of native connectors, implement these universal connectors.
+
+## Generic REST Connector
+
+Support:
+
+```text
+GET
+POST
+PUT
+PATCH
+DELETE
+
+OAuth
+API keys
+Bearer authentication
+
+pagination
+
+JSON mapping
+
+rate limits
+
+webhooks
+```
+
+---
+
+## CSV Connector
+
+Support:
+
+```text
+CSV upload
+column detection
+field mapping
+validation
+preview
+import
+deduplication
+```
+
+---
+
+## Excel Connector
+
+Support:
+
+```text
+.xlsx
+.xls where safely supported
+multiple worksheets
+header detection
+field mapping
+preview
+import
+```
+
+---
+
+## SQL Connector
+
+Design adapters for:
+
+```text
+Microsoft SQL Server
+MySQL
+PostgreSQL
+```
+
+Default to READ-ONLY database access.
+
+Do not allow arbitrary AI-generated SQL against production databases.
+
+Use approved queries/data access services.
+
+---
+
+# 12. NATIVE CONNECTORS
+
+Create the architecture and connector manifests for ALL providers below.
+
+Only mark a connector AVAILABLE when the real API integration works.
+
+---
+
+# P0 — FOUNDATION
+
+Implement first:
+
+### Microsoft 365 / Microsoft Graph
+
+Support where API permissions allow:
+
+```text
+Outlook Mail
+Calendar
+Contacts
+Users
+OneDrive
+SharePoint
+```
+
+Potential capabilities:
+
+```text
+email.read
+email.send
+calendar.read
+calendar.write
+contacts.read
+files.read
+files.write
+documents.search
+```
+
+---
+
+### Google Workspace
+
+Support:
+
+```text
+Gmail
+Google Calendar
+Google Drive
+Google Contacts / People
+```
+
+---
+
+### CSV / Excel
+
+Fully implement.
+
+### Generic REST + OAuth 2.0
+
+Fully implement.
+
+### SQL
+
+Fully implement framework.
+
+---
+
+# P1 — HIGH PRIORITY
+
+Create connector modules/manifests for:
+
+### QuickBooks Online
+
+Target:
+
+```text
+customers
+vendors
+invoices
+expenses
+payments
+products
+```
+
+### Sage
+
+Target:
+
+```text
+customers
+vendors
+invoices
+expenses
+payments
+accounting data
+```
+
+Do not assume one API covers every Sage product.
+
+Keep Sage product/version information in connector configuration.
+
+### Xero
+
+Target:
+
+```text
+contacts
+invoices
+payments
+expenses
+accounting
+```
+
+### Payworks
+
+Target:
+
+```text
+employees
+time
+payroll
+```
+
+IMPORTANT:
+
+Research/verify available official API or partner integration access before implementation.
+
+If direct API access is unavailable, mark:
+
+```text
+requires_partner_access
+```
+
+Do NOT invent API endpoints.
+
+Allow fallback integration through authorized exports/files where appropriate.
+
+### ADP
+
+Target:
+
+```text
+employees
+payroll
+time
+workforce
+```
+
+### Dayforce
+
+Target:
+
+```text
+employees
+payroll
+time
+workforce
+```
+
+### Square
+
+Target:
+
+```text
+customers
+orders
+payments
+products
+inventory
+locations
+```
+
+### Shopify / Shopify POS
+
+Target:
+
+```text
+customers
+orders
+products
+inventory
+locations
+```
+
+### Clover
+
+Target:
+
+```text
+orders
+payments
+inventory
+employees
+```
+
+### Lightspeed
+
+Target:
+
+```text
+orders
+products
+inventory
+customers
+```
+
+### Moneris
+
+Target:
+
+```text
+payments
+transactions
+POS data where supported
+```
+
+### TouchBistro
+
+Target restaurant operations where officially supported.
+
+---
+
+# P2 — EXPANSION
+
+Create connector manifests and architecture for:
+
+### Zoho
+
+Do NOT treat Zoho as one API.
+
+Support modular products:
+
+```text
+Zoho CRM
+Zoho Books
+```
+
+Zoho CRM target:
+
+```text
+contacts
+accounts
+leads
+deals
+tasks
+```
+
+Zoho Books target:
+
+```text
+customers
+vendors
+invoices
+expenses
+payments
+```
+
+---
+
+### HubSpot
+
+Target:
+
+```text
+contacts
+companies
+deals
+tickets
+```
+
+### Salesforce
+
+Target:
+
+```text
+accounts
+contacts
+leads
+opportunities
+cases
+```
+
+### Microsoft Dynamics 365
+
+Target:
+
+```text
+customers
+sales
+finance
+inventory
+operations
+```
+
+Keep CRM and ERP capabilities modular.
+
+### SAP
+
+Build an adapter architecture.
+
+Do NOT assume every SAP customer has the same deployment/API.
+
+Support configuration for different SAP environments.
+
+### Oracle NetSuite
+
+Target:
+
+```text
+customers
+vendors
+finance
+orders
+inventory
+```
+
+### Jobber
+
+Target:
+
+```text
+customers
+jobs
+quotes
+scheduling
+invoices
+```
+
+### ServiceTitan
+
+Target:
+
+```text
+customers
+jobs
+dispatch
+technicians
+service workflows
+```
+
+### Procore
+
+Target:
+
+```text
+projects
+documents
+contractors
+construction workflows
+```
+
+### Monday.com
+
+Target:
+
+```text
+boards
+items
+tasks
+projects
+```
+
+### Slack
+
+Target:
+
+```text
+messages.read
+messages.send
+workflow events
+```
+
+### Twilio
+
+Target:
+
+```text
+SMS
+phone calls
+notifications
+communication events
+```
+
+---
+
+# P3 — SPECIALIZED CONNECTORS
+
+Create extension interfaces for:
+
+## Manufacturing
+
+```text
+MES
+CMMS
+SCADA
+OPC-UA
+PLC-derived data
+maintenance systems
+production systems
+```
+
+Create:
+
+```text
+IndustrialConnector
+```
+
+Potential normalized objects:
+
+```text
+Asset
+Machine
+WorkOrder
+MaintenanceEvent
+DowntimeEvent
+ProductionRun
+QualityEvent
+```
+
+---
+
+# Healthcare
+
+Create:
+
+```text
+FHIRConnector
+```
+
+Support standards-based FHIR integration where authorized.
+
+Potential objects:
+
+```text
+Patient
+Appointment
+Practitioner
+Encounter
+Document
+```
+
+DO NOT build unrestricted healthcare access.
+
+Healthcare integrations must remain disabled until proper authorization, privacy controls, audit logging and deployment requirements exist.
+
+---
+
+# 13. CONNECTOR MARKETPLACE UI
+
+Create:
+
+```text
+Settings
+→ Integrations
+```
+
+Display cards like:
+
+```text
+Microsoft 365
+Email • Calendar • Files
+
+[ Connect ]
+```
+
+```text
+Zoho CRM
+CRM • Leads • Deals
+
+[ Connect ]
+```
+
+```text
+QuickBooks
+Accounting • Invoices • Payments
+
+[ Connect ]
+```
+
+Connector states:
+
+```text
+Available
+Connected
+Needs Attention
+Beta
+Coming Soon
+Requires Partner Access
+```
+
+Allow filtering:
+
+```text
+All
+
+Communication
+Accounting
+CRM
+Commerce
+Payroll
+Operations
+Documents
+Industrial
+Healthcare
+```
+
+---
+
+# 14. CONNECTION DETAILS PAGE
+
+After connecting:
+
+```text
+Microsoft 365
+
+Status: Connected
+
+Account:
+company@example.com
+
+Capabilities:
+
+✓ Email read
+✓ Email send
+✓ Calendar read
+✓ Calendar write
+✓ Contacts
+✓ Files
+
+Last Sync:
+2 minutes ago
+
+Health:
+Healthy
+```
+
+Buttons:
+
+```text
+Sync Now
+Manage Permissions
+View Sync History
+Reconnect
+Disconnect
+```
+
+---
+
+# 15. SECURITY REQUIREMENTS
+
+This is critical.
+
+Implement:
+
+```text
+organization isolation
+RBAC
+least-privilege OAuth scopes
+encrypted secrets
+token rotation/refresh
+audit logs
+webhook signature verification
+rate limiting
+input validation
+secure logging
+```
+
+NEVER log:
+
+```text
+access tokens
+refresh tokens
+API secrets
+passwords
+full sensitive payroll data
+```
+
+AI must NEVER receive direct unrestricted credentials.
+
+Use:
+
+```text
+User
+ ↓
+Nexa AI
+ ↓
+Permission Engine
+ ↓
+Tool / Action Router
+ ↓
+Connector
+ ↓
+External API
+```
+
+---
+
+# 16. READ VS WRITE SAFETY
+
+Treat READ and WRITE separately.
+
+For example:
+
+```text
+invoice.read
+```
+
+does NOT automatically grant:
+
+```text
+invoice.write
+```
+
+High-impact actions should require explicit permission.
+
+Examples:
+
+```text
+sending email
+creating invoice
+changing inventory
+editing payroll
+issuing payment
+deleting records
+```
+
+Create an approval mechanism.
+
+Example:
+
+```text
+AI proposes action
+       ↓
+Permission check
+       ↓
+Approval required?
+       ↓
+User confirms
+       ↓
+Connector executes
+       ↓
+Audit log
+```
+
+---
+
+# 17. AI RULE
+
+Do NOT use AI for deterministic calculations.
+
+Examples:
+
+```text
+invoice totals
+inventory counts
+financial calculations
+dates
+payment totals
+KPI calculations
+```
+
+These should be calculated using code/database queries.
+
+AI should be used for:
+
+```text
+summarization
+classification
+explanation
+natural-language queries
+document understanding
+draft generation
+workflow suggestions
+```
+
+---
+
+# 18. CONNECTOR HEALTH
+
+Build monitoring.
+
+Each connector should expose:
+
+```text
+healthy
+degraded
+authentication_expired
+rate_limited
+sync_failed
+disconnected
+```
+
+Track:
+
+```text
+last successful sync
+last failed sync
+API latency
+records synchronized
+webhook status
+token expiry
+errors
+```
+
+---
+
+# 19. DO NOT FAKE CONNECTORS
+
+This requirement is extremely important.
+
+If an API is unavailable, undocumented, requires vendor approval, or has not been implemented:
+
+DO NOT generate fake API endpoints.
+
+DO NOT simulate it as working.
+
+Instead mark it:
+
+```text
+planned
+development
+requires_partner_access
+```
+
+Create the connector interface and manifest but leave the implementation disabled.
+
+The UI must clearly distinguish:
+
+```text
+CONNECTED
+AVAILABLE
+BETA
+COMING SOON
+```
+
+---
+
+# 20. FIRST WORKING PROOF
+
+The first real cross-system proof should be:
+
+```text
+Microsoft 365
+      ↓
+NexaConnect
+      ↓
+NexaTech Core
+      ↑
+Zoho CRM
+```
+
+Implement a query equivalent to:
+
+> Show customers with active Zoho opportunities who emailed us during the last seven days.
+
+Flow:
+
+```text
+Zoho
+↓
+Active opportunities
+↓
+Normalized customers
+↓
+Identity resolution
+↑
+Recent Outlook email
+↑
+Microsoft Graph
+```
+
+Then allow:
+
+```text
+Create follow-up task
+```
+
+and eventually:
+
+```text
+Draft follow-up email
+```
+
+Sending the email must require explicit authorization.
+
+---
+
+# 21. PROJECT STRUCTURE
+
+Use a clean modular structure similar to:
+
+```text
+src/
+
+  core/
+    auth/
+    organizations/
+    permissions/
+    events/
+    audit/
+
+  connectors/
+
+    sdk/
+      Connector.ts
+      Capability.ts
+      ConnectorManifest.ts
+      AuthProvider.ts
+      SyncAdapter.ts
+
+    registry/
+
+    generic/
+      rest/
+      csv/
+      excel/
+      sql/
+
+    microsoft365/
+    google/
+    quickbooks/
+    sage/
+    xero/
+    payworks/
+    adp/
+    dayforce/
+
+    square/
+    shopify/
+    clover/
+    lightspeed/
+    moneris/
+    touchbistro/
+
+    zoho/
+    hubspot/
+    salesforce/
+
+    dynamics365/
+    sap/
+    netsuite/
+
+    jobber/
+    servicetitan/
+    procore/
+    monday/
+
+    slack/
+    twilio/
+
+    industrial/
+    fhir/
+
+  sync/
+    ingestion/
+    mapping/
+    normalization/
+    identity/
+    retry/
+
+  workflows/
+    triggers/
+    conditions/
+    actions/
+    approvals/
+
+  ai/
+
+  database/
+
+  api/
+
+  ui/
+```
+
+---
+
+# 22. DATABASE
+
+Design tables/models for at least:
+
+```text
+organizations
+users
+roles
+permissions
+
+connector_definitions
+organization_connections
+connector_credentials
+
+sync_jobs
+sync_cursors
+sync_errors
+
+external_records
+field_mappings
+
+customers
+contacts
+vendors
+employees
+
+products
+inventory_items
+
+orders
+invoices
+payments
+expenses
+
+tasks
+work_orders
+assets
+
+messages
+documents
+
+entity_links
+
+workflow_definitions
+workflow_runs
+
+approval_requests
+
+audit_logs
+```
+
+Use migrations.
+
+Use organization/tenant IDs everywhere required for isolation.
+
+---
+
+# 23. TESTING
+
+Create automated tests for:
+
+```text
+OAuth callback validation
+token refresh
+connector registration
+capability checks
+field mapping
+normalization
+pagination
+rate limiting
+retries
+webhook validation
+identity resolution
+tenant isolation
+permissions
+approval requirements
+audit logging
+```
+
+Create MOCK connectors for automated testing.
+
+Mocks must be clearly identified as test connectors and never displayed as production integrations.
+
+---
+
+# 24. BUILD ORDER
+
+DO NOT attempt to fully implement every connector immediately.
+
+Build in this exact order:
+
+## Stage 1
+
+```text
+Connector SDK
+Connector Registry
+Capability Registry
+OAuth Framework
+Secrets abstraction
+Universal data model
+Audit system
+```
+
+## Stage 2
+
+```text
+CSV
+Excel
+Generic REST
+SQL
+Webhook engine
+```
+
+## Stage 3
+
+```text
+Microsoft 365
+```
+
+## Stage 4
+
+```text
+Zoho CRM
+```
+
+## Stage 5
+
+Prove cross-system identity resolution and query.
+
+## Stage 6
+
+```text
+QuickBooks
+Google Workspace
+```
+
+## Stage 7
+
+```text
+Square
+Shopify
+Sage
+Xero
+```
+
+## Stage 8
+
+Research and implement supported paths for:
+
+```text
+Payworks
+ADP
+Dayforce
+Clover
+Lightspeed
+Moneris
+TouchBistro
+```
+
+## Stage 9
+
+```text
+HubSpot
+Salesforce
+Dynamics 365
+Jobber
+ServiceTitan
+Procore
+Monday
+Slack
+Twilio
+```
+
+## Stage 10
+
+Enterprise and specialized adapters:
+
+```text
+SAP
+NetSuite
+MES
+CMMS
+OPC-UA
+FHIR
+legacy local agent
+```
+
+---
+
+# 25. IMPORTANT DEVELOPMENT BEHAVIOUR
+
+Before implementing each external provider:
+
+1. Find its CURRENT official developer documentation.
+2. Determine authentication method.
+3. Determine required OAuth scopes.
+4. Determine API version.
+5. Determine rate limits.
+6. Determine available objects.
+7. Determine webhook support.
+8. Determine read/write capabilities.
+9. Determine whether partner approval is required.
+10. Record all findings in the connector manifest/documentation.
+
+Do not guess.
+
+If official documentation cannot verify a capability, mark it unsupported/unverified.
+
+---
+
+# 26. WHAT I WANT YOU TO BUILD NOW
+
+Start with the architecture, NOT all 30 APIs.
+
+For the first implementation:
+
+1. Inspect the existing NexaTech repository before changing anything.
+2. Preserve existing working functionality.
+3. Create the NexaConnector SDK.
+4. Create the capability registry.
+5. Create connector manifests.
+6. Create the connector registry.
+7. Create organization connection storage.
+8. Create the OAuth framework.
+9. Create secure credential abstraction.
+10. Create CSV/Excel connector.
+11. Create Generic REST connector.
+12. Create SQL connector interface.
+13. Create synchronization engine.
+14. Create mapping/normalization framework.
+15. Create identity-resolution framework.
+16. Create webhook/event framework.
+17. Create permission + approval architecture.
+18. Create audit logging.
+19. Create the Integrations UI.
+20. Add all providers listed above to the registry with honest statuses.
+21. Fully implement Microsoft 365 first.
+22. Implement Zoho CRM second.
+23. Build the Microsoft 365 + Zoho cross-system proof of concept.
+24. Add automated tests.
+25. Document how another developer can add a new connector.
+
+Before writing major implementation code, first show me:
+
+* the proposed architecture,
+* database changes,
+* folder structure,
+* connector interface,
+* authentication strategy,
+* security approach,
+* and implementation phases.
+
+Then begin implementation after confirming the architecture fits the existing repository.
+
+The goal is to build **one scalable NexaConnect platform capable of supporting hundreds of future integrations**, not dozens of unrelated API integrations.
